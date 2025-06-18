@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+torch
+diffusers
+transformers
+python-dotenv
+loguru
+runpod-serverless
+runpod-python
