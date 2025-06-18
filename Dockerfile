@@ -1,18 +1,22 @@
-FROM python:3.10-slim
+# Dockerfile
+FROM python:3.10.15-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
-
-# install system libs
-RUN apt-get update && apt-get install -y \
-    git curl libgl1-mesa-glx libglib2.0-0 && \
-    rm -rf /var/lib/apt/lists/*
+# 1) install system deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 2) copy only requirements and install
+COPY requirements.txt ./
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
+# 3) copy rest of your service
 COPY . .
 
+# 4) default to running your handler
 CMD ["python", "handler.py"]
