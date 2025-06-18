@@ -5,5 +5,4 @@ diffusers
 transformers
 python-dotenv
 loguru
-runpod-serverless
-runpod-python
+runpod
