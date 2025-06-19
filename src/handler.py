@@ -2,7 +2,9 @@ import os
 import torch
 import traceback
 import warnings
+import base64
 import shutil
+from io import BytesIO
 from dotenv import load_dotenv
 from diffusers import StableDiffusionXLPipeline
 from transformers import CLIPTokenizer
@@ -75,7 +77,7 @@ if not hasattr(pipe, "tokenizer_2") or pipe.tokenizer_2 is None:
             subfolder="tokenizer_2",
             use_auth_token=HF_TOKEN
         )
-    except Exception as e:
+    except Exception:
         print("⚠️ No tokenizer_2 found. Continuing without it.")
 
 # Try enabling xFormers
@@ -108,18 +110,17 @@ def handler(event):
         steps    = int(data.get("steps", 30))
 
         print(f"🖼️ Generating: {prompt!r} | steps: {steps} | scale: {guidance}")
-
         result = pipe(prompt, guidance_scale=guidance, num_inference_steps=steps)
         image = result.images[0]
 
-        tmp = "/tmp/output.png"
-        public = "/runpod-volume/public/output.png"
-        os.makedirs(os.path.dirname(public), exist_ok=True)
-        image.save(tmp)
-        shutil.copy(tmp, public)
+        # Encode into Base64 data-URL
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        data_url = f"data:image/png;base64,{b64}"
 
-        print("✅ Image saved successfully.")
-        return {"image_paths": ["/output.png"]}
+        print("✅ Image encoded and ready.")
+        return {"image": data_url}
 
     except Exception as exc:
         print("❌ Error in handler:")
