@@ -19,4 +19,4 @@ RUN pip install --upgrade pip && \
 COPY . .
 
 # 4) default to running your handler in src/
-CMD ["python", "src/handler.py"]
+CMD ["python", "handler.py"]
