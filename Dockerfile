@@ -18,5 +18,5 @@ RUN pip install --upgrade pip && \
 # 3) copy rest of your service
 COPY . .
 
-# 4) default to running your handler in src/
-CMD ["python", "handler.py"]
+# 4) run the handler
+CMD ["python", "src/handler.py"]
