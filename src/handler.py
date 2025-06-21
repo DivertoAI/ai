@@ -3,24 +3,33 @@ import torch
 import traceback
 import warnings
 import base64
+import shutil
 from io import BytesIO
 from dotenv import load_dotenv
-from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
+from diffusers import (
+    StableDiffusionXLPipeline,
+    DPMSolverMultistepScheduler,
+    AutoencoderKL,
+    UNet2DConditionModel
+)
 from transformers import CLIPTokenizer
 from runpod.serverless import start
+from PIL import Image
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ENV SETUP
+#  ENV SETUP
 # ──────────────────────────────────────────────────────────────────────────────
-print("📦 Loading environment variables...")
-load_dotenv(".env.local", override=True)
+load_dotenv(
+    dotenv_path=os.getenv("DOTENV_PATH", ".env.local"),
+    override=True
+)
 
-# Force Hugging Face cache paths
+# force HF cache
 os.environ["HF_HOME"] = "/runpod-volume/huggingface"
-os.environ["TRANSFORMERS_CACHE"] = "/runpod-volume/huggingface"
-os.environ["HF_HUB_CACHE"] = "/runpod-volume/huggingface"
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+ios.environ["TRANSFORMERS_CACHE"] = "/runpod-volume/huggingface"
+ios.environ["HF_HUB_CACHE"] = "/runpod-volume/huggingface"
+for k in ["HF_HUB_DISABLE_PROGRESS_BARS", "HF_HUB_DISABLE_TELEMETRY"]:
+    os.environ[k] = "1"
 
 HF_TOKEN   = os.getenv("HUGGING_FACE_TOKEN")
 MODEL_REPO = "RunDiffusion/Juggernaut-XL-v8"
@@ -31,113 +40,106 @@ warnings.filterwarnings("ignore", category=UserWarning, module="diffusers")
 os.makedirs(MODEL_PATH, exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# DOWNLOAD & CACHE MODEL
+#  DOWNLOAD MODEL
 # ──────────────────────────────────────────────────────────────────────────────
 def download_model_if_needed():
     if not os.path.exists(os.path.join(MODEL_PATH, "model_index.json")):
-        print("🔽 Downloading Juggernaut-XL…")
         pipe = StableDiffusionXLPipeline.from_pretrained(
             MODEL_REPO,
-            use_auth_token=HF_TOKEN,
             torch_dtype=torch.float16,
+            use_auth_token=HF_TOKEN,
             cache_dir=os.environ["HF_HOME"]
         )
         pipe.save_pretrained(MODEL_PATH)
         pipe.tokenizer.save_pretrained(os.path.join(MODEL_PATH, "tokenizer"))
-        if hasattr(pipe, "tokenizer_2") and pipe.tokenizer_2 is not None:
+        if hasattr(pipe, "tokenizer_2") and pipe.tokenizer_2:
             pipe.tokenizer_2.save_pretrained(os.path.join(MODEL_PATH, "tokenizer_2"))
         del pipe
+
+        print("🔽 Model downloaded & cached.")
     else:
-        print("✅ Model already cached")
+        print("✅ Model cache found.")
 
 download_model_if_needed()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# LOAD PIPELINE
+#  LOAD PIPELINE
 # ──────────────────────────────────────────────────────────────────────────────
-print("🧠 Loading pipeline...")
+print("🧠 Loading SDXL pipeline with DPMSolverMultistepScheduler…")
 pipe = StableDiffusionXLPipeline.from_pretrained(
     MODEL_PATH,
     torch_dtype=torch.float16,
     scheduler=DPMSolverMultistepScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
 ).to(DEVICE)
 
-# Restore missing tokenizers
+# restore tokenizers
 if pipe.tokenizer is None:
-    pipe.tokenizer = CLIPTokenizer.from_pretrained(
-        MODEL_REPO,
-        subfolder="tokenizer",
-        use_auth_token=HF_TOKEN
-    )
-if not hasattr(pipe, "tokenizer_2") or pipe.tokenizer_2 is None:
+    pipe.tokenizer = CLIPTokenizer.from_pretrained(MODEL_REPO, subfolder="tokenizer", use_auth_token=HF_TOKEN)
+if not getattr(pipe, "tokenizer_2", None):
     try:
-        pipe.tokenizer_2 = CLIPTokenizer.from_pretrained(
-            MODEL_REPO,
-            subfolder="tokenizer_2",
-            use_auth_token=HF_TOKEN
-        )
-    except Exception:
-        print("⚠️ No tokenizer_2 found. Continuing without it.")
+        pipe.tokenizer_2 = CLIPTokenizer.from_pretrained(MODEL_REPO, subfolder="tokenizer_2", use_auth_token=HF_TOKEN)
+    except:
+        pass
 
-# Try enabling xFormers
+# memory efficient attention
 try:
     if DEVICE == "cuda":
         pipe.enable_xformers_memory_efficient_attention()
-        print("⚡ xFormers enabled")
-except Exception:
-    print("⚠️ xFormers not available. Continuing...")
+        print("⚡ xFormers enabled.")
+except:
+    print("⚠️ xFormers not available.")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HANDLER
+#  HANDLER
 # ──────────────────────────────────────────────────────────────────────────────
 def handler(event):
     try:
-        print("🎯 Event received.")
         data = event.get("input", {})
         char = data.get("characterData", {})
 
-        # Enriched photorealistic prompt
+        # build ultra-photorealistic prompt
         prompt = (
-            f"(photorealistic:1.4), ultra-detailed, 8K, studio lighting, realistic skin texture,\n"
-            f"a portrait of a {char.get('gender','')} named {char.get('name','')}, {char.get('age','')} years old, "
-            f"{char.get('race','')} race, {char.get('bodyType','')} body, "
+            f"ultra realistic, photorealistic portrait of a {char.get('gender','')} named {char.get('name','')}, "
+            f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} body, "
             f"{char.get('hairColor','')} {char.get('hairStyle','')} hair, {char.get('eyeColor','')} eyes, "
-            f"{char.get('boobSize','')} boobs, {char.get('buttSize','')} butt, "
-            f"{char.get('personalityDescription','')}, background: {char.get('storylineBackground','')}, "
-            f"setting: {char.get('setting','')}, relationship: {char.get('relationshipType','')}"
+            f"{char.get('boobSize','')} boobs, {char.get('buttSize','')} butt, sub-surface scattering skin, "
+            f"8k resolution, studio lighting, film grain, cinematic depth of field, extremely detailed skin pores"
         )
 
-        negative = data.get("negative_prompt", "cartoon, low res, painting, anime, sketch")
-        guidance = float(data.get("guidance_scale", 10.0))
-        steps    = int(data.get("steps", 60))
+        negative = data.get("negative_prompt", "cartoon, anime, sketch, lowres, deformed, blurry")
+        steps = int(data.get("steps", 50))
+        guidance = float(data.get("guidance_scale", 9.0))
 
-        print(f"🖼️ Generating with prompt: {prompt!r}")
-        print(f"   negative_prompt: {negative!r} | steps: {steps} | scale: {guidance}")
-
-        result = pipe(
+        out = pipe(
             prompt=prompt,
             negative_prompt=negative,
-            guidance_scale=guidance,
-            num_inference_steps=steps
+            num_inference_steps=steps,
+            guidance_scale=guidance
         )
-        image = result.images[0]
+        img = out.images[0]
 
-        # Encode into Base64 data-URL
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        data_url = f"data:image/png;base64,{b64}"
+        # optional upscaling with Real-ESRGAN (if installed)
+        try:
+            from realesrgan import RealESRGAN
+            model = RealESRGAN(DEVICE, scale=2)
+            model.load_weights("RealESRGAN_x2.pth")
+            img = model.predict(img)
+        except:
+            pass
 
-        print("✅ Image encoded and ready.")
-        return {"image": data_url}
+        # encode as Base64
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
 
-    except Exception as exc:
-        print("❌ Error in handler:")
+        return {"image": f"data:image/png;base64,{b64}"}
+
+    except Exception as e:
         traceback.print_exc()
-        return {"error": str(exc), "trace": traceback.format_exc()}
+        return {"error": str(e), "trace": traceback.format_exc()}
 
 # ──────────────────────────────────────────────────────────────────────────────
-# RUN SERVERLESS
+#  RUN SERVERLESS
 # ──────────────────────────────────────────────────────────────────────────────
-print("🚀 Starting RunPod serverless handler...")
+print("🚀 Starting RunPod handler…")
 start({"handler": handler})
