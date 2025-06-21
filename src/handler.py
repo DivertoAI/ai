@@ -3,15 +3,14 @@ import torch
 import traceback
 import warnings
 import base64
-import shutil
 from io import BytesIO
 from dotenv import load_dotenv
-from diffusers import StableDiffusionXLPipeline
+from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
 from transformers import CLIPTokenizer
 from runpod.serverless import start
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  ENV SETUP
+# ENV SETUP
 # ──────────────────────────────────────────────────────────────────────────────
 print("📦 Loading environment variables...")
 load_dotenv(".env.local", override=True)
@@ -32,7 +31,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="diffusers")
 os.makedirs(MODEL_PATH, exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  DOWNLOAD & CACHE MODEL
+# DOWNLOAD & CACHE MODEL
 # ──────────────────────────────────────────────────────────────────────────────
 def download_model_if_needed():
     if not os.path.exists(os.path.join(MODEL_PATH, "model_index.json")):
@@ -54,12 +53,13 @@ def download_model_if_needed():
 download_model_if_needed()
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  LOAD PIPELINE
+# LOAD PIPELINE
 # ──────────────────────────────────────────────────────────────────────────────
 print("🧠 Loading pipeline...")
 pipe = StableDiffusionXLPipeline.from_pretrained(
     MODEL_PATH,
-    torch_dtype=torch.float16
+    torch_dtype=torch.float16,
+    scheduler=DPMSolverMultistepScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
 ).to(DEVICE)
 
 # Restore missing tokenizers
@@ -69,7 +69,6 @@ if pipe.tokenizer is None:
         subfolder="tokenizer",
         use_auth_token=HF_TOKEN
     )
-
 if not hasattr(pipe, "tokenizer_2") or pipe.tokenizer_2 is None:
     try:
         pipe.tokenizer_2 = CLIPTokenizer.from_pretrained(
@@ -89,7 +88,7 @@ except Exception:
     print("⚠️ xFormers not available. Continuing...")
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  HANDLER
+# HANDLER
 # ──────────────────────────────────────────────────────────────────────────────
 def handler(event):
     try:
@@ -97,20 +96,30 @@ def handler(event):
         data = event.get("input", {})
         char = data.get("characterData", {})
 
+        # Enriched photorealistic prompt
         prompt = (
-            f"a portrait of a {char.get('gender','')} named {char.get('name','')}, "
-            f"{char.get('age','')} years old, {char.get('race','')} race, "
-            f"{char.get('bodyType','')} body, {char.get('hairColor','')} {char.get('hairStyle','')} hair, "
-            f"{char.get('eyeColor','')} eyes, {char.get('boobSize','')} boobs, {char.get('buttSize','')} butt, "
+            f"(photorealistic:1.4), ultra-detailed, 8K, studio lighting, realistic skin texture,\n"
+            f"a portrait of a {char.get('gender','')} named {char.get('name','')}, {char.get('age','')} years old, "
+            f"{char.get('race','')} race, {char.get('bodyType','')} body, "
+            f"{char.get('hairColor','')} {char.get('hairStyle','')} hair, {char.get('eyeColor','')} eyes, "
+            f"{char.get('boobSize','')} boobs, {char.get('buttSize','')} butt, "
             f"{char.get('personalityDescription','')}, background: {char.get('storylineBackground','')}, "
-            f"setting: {char.get('setting','')}, relationship: {char.get('relationshipType','')}, cinematic lighting, high quality"
+            f"setting: {char.get('setting','')}, relationship: {char.get('relationshipType','')}"
         )
 
-        guidance = float(data.get("guidance_scale", 7.5))
-        steps    = int(data.get("steps", 30))
+        negative = data.get("negative_prompt", "cartoon, low res, painting, anime, sketch")
+        guidance = float(data.get("guidance_scale", 10.0))
+        steps    = int(data.get("steps", 60))
 
-        print(f"🖼️ Generating: {prompt!r} | steps: {steps} | scale: {guidance}")
-        result = pipe(prompt, guidance_scale=guidance, num_inference_steps=steps)
+        print(f"🖼️ Generating with prompt: {prompt!r}")
+        print(f"   negative_prompt: {negative!r} | steps: {steps} | scale: {guidance}")
+
+        result = pipe(
+            prompt=prompt,
+            negative_prompt=negative,
+            guidance_scale=guidance,
+            num_inference_steps=steps
+        )
         image = result.images[0]
 
         # Encode into Base64 data-URL
@@ -128,7 +137,7 @@ def handler(event):
         return {"error": str(exc), "trace": traceback.format_exc()}
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  RUN SERVERLESS
+# RUN SERVERLESS
 # ──────────────────────────────────────────────────────────────────────────────
 print("🚀 Starting RunPod serverless handler...")
 start({"handler": handler})
