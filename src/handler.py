@@ -5,7 +5,7 @@ import warnings
 import base64
 from io import BytesIO
 from dotenv import load_dotenv
-from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
+from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 from transformers import CLIPTokenizer
 from runpod.serverless import start
 
@@ -58,7 +58,7 @@ print("🧠 Loading pipeline...")
 pipe = StableDiffusionXLPipeline.from_pretrained(
     MODEL_PATH,
     torch_dtype=torch.float16,
-    scheduler=DPMSolverMultistepScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
+    scheduler=EulerAncestralDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
 ).to(DEVICE)
 
 if pipe.tokenizer is None:
@@ -76,7 +76,6 @@ if not hasattr(pipe, "tokenizer_2") or pipe.tokenizer_2 is None:
 try:
     if DEVICE == "cuda":
         pipe.enable_xformers_memory_efficient_attention()
-        # pipe.enable_model_cpu_offload()  # Optional memory optimization
         print("⚡ xFormers enabled")
 except Exception:
     print("⚠️ xFormers not available. Continuing...")
@@ -90,20 +89,23 @@ def handler(event):
         data = event.get("input", {})
         char = data.get("characterData", {})
 
-        # Structured realism prompt
+        # Realism-focused enriched prompt
         prompt = (
-            f"(photorealistic:1.4), ultra-detailed, cinematic lighting, HDR, realistic skin pores, "
-            f"Canon EOS R5 85mm depth of field portrait of {char.get('gender','a person')} named {char.get('name','')}, "
-            f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} physique, "
+            f"(photorealistic:1.4), ultra-detailed, soft diffused natural light, shot on Canon EOS R5 with 85mm lens, "
+            f"bokeh background, skin texture with pores and tiny imperfections, light facial hair, "
+            f"a portrait of {char.get('gender','an individual')} named {char.get('name','')}, "
+            f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} body type, "
             f"{char.get('hairColor','')} {char.get('hairStyle','')} hair, {char.get('eyeColor','')} eyes, "
-            f"{char.get('personalityDescription','')}, wearing natural clothing, "
-            f"set in a {char.get('setting','simple setting')}, background: {char.get('storylineBackground','')}, "
-            f"relationship status: {char.get('relationshipType','single')}"
+            f"{char.get('personalityDescription','')}, naturally posed, slight asymmetry, visible neck and collarbone, "
+            f"background: {char.get('storylineBackground','minimal studio')}, "
+            f"location: {char.get('setting','loft interior')}, relationship status: {char.get('relationshipType','unspecified')}"
         )
 
-        negative = data.get("negative_prompt", "low quality, jpeg artifacts, cartoon, blurry, distorted, deformed face")
-        guidance = float(data.get("guidance_scale", 9.5))
-        steps    = int(data.get("steps", 75))
+        # Suppress artificial features
+        negative = data.get("negative_prompt",
+            "low quality, glossy skin, digital art, airbrushed, plastic texture, uncanny valley, distorted face, overexposed, flat lighting")
+        guidance = float(data.get("guidance_scale", 8.0))
+        steps = int(data.get("steps", 85))
 
         print(f"🖼️ Prompt: {prompt}")
         print(f"⛔ Negative: {negative} | 🎚️ Steps: {steps} | 🎯 Guidance: {guidance}")
