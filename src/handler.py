@@ -61,6 +61,8 @@ pipe = StableDiffusionXLPipeline.from_pretrained(
     scheduler=EulerAncestralDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
 ).to(DEVICE)
 
+pipe.safety_checker = None  # Disable NSFW blocker
+
 if pipe.tokenizer is None:
     pipe.tokenizer = CLIPTokenizer.from_pretrained(
         MODEL_REPO, subfolder="tokenizer", use_auth_token=HF_TOKEN
@@ -89,21 +91,22 @@ def handler(event):
         data = event.get("input", {})
         char = data.get("characterData", {})
 
-        # Realism-focused enriched prompt
+        # Enriched prompt: supports NSFW & artistic realism
         prompt = (
-            f"(photorealistic:1.4), ultra-detailed, soft diffused natural light, shot on Canon EOS R5 with 85mm lens, "
-            f"bokeh background, skin texture with pores and tiny imperfections, light facial hair, "
-            f"a portrait of {char.get('gender','an individual')} named {char.get('name','')}, "
-            f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} body type, "
+            f"(photorealistic:1.4), ultra-detailed, natural soft lighting, skin pores, visible anatomy, "
+            f"posed in a sexual position: {char.get('pose','')}, "
+            f"{char.get('gender','individual')} named {char.get('name','')}, "
+            f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} physique, "
             f"{char.get('hairColor','')} {char.get('hairStyle','')} hair, {char.get('eyeColor','')} eyes, "
-            f"{char.get('personalityDescription','')}, naturally posed, slight asymmetry, visible neck and collarbone, "
-            f"background: {char.get('storylineBackground','minimal studio')}, "
-            f"location: {char.get('setting','loft interior')}, relationship status: {char.get('relationshipType','unspecified')}"
+            f"{char.get('personalityDescription','')}, unclothed, natural skin folds, relaxed limbs, "
+            f"background: {char.get('storylineBackground','bedroom or indoor set')}, "
+            f"environment: {char.get('setting','intimate setting')}, mood: erotic and cinematic"
         )
 
-        # Suppress artificial features
+        # Expanded negative prompt for distortion cleanup
         negative = data.get("negative_prompt",
-            "low quality, glossy skin, digital art, airbrushed, plastic texture, uncanny valley, distorted face, overexposed, flat lighting")
+            "lowres, low quality, jpeg artifacts, blurry, bad anatomy, extra limbs, fused fingers, malformed hands, distorted face, broken pose, cartoon, overexposed")
+
         guidance = float(data.get("guidance_scale", 8.0))
         steps = int(data.get("steps", 85))
 
