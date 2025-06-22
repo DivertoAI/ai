@@ -93,7 +93,7 @@ def handler(event):
 
         # Enriched prompt: supports NSFW & artistic realism
         prompt = (
-            f"(photorealistic:1.4), ultra-detailed, natural soft lighting, skin pores, visible anatomy, "
+            f"(realistic:1.4), photographic style, 85mm lens depth of field, shot on Fujifilm GFX100, human skin texture, cinematic shadows, "
             f"posed in a sexual position: {char.get('pose','')}, "
             f"{char.get('gender','individual')} named {char.get('name','')}, "
             f"{char.get('age','')} years old, {char.get('race','')} race, {char.get('bodyType','')} physique, "
@@ -105,7 +105,7 @@ def handler(event):
 
         # Expanded negative prompt for distortion cleanup
         negative = data.get("negative_prompt",
-            "lowres, low quality, jpeg artifacts, blurry, bad anatomy, extra limbs, fused fingers, malformed hands, distorted face, broken pose, cartoon, overexposed")
+            "anime, cartoon, CGI, 3D render, unrealistic, lowres, smooth plastic skin, poorly drawn hands, unrealistic proportions, duplicate limbs, painting,lowres, low quality, jpeg artifacts, blurry, bad anatomy, extra limbs, fused fingers, malformed hands, distorted face, broken pose, cartoon, overexposed")
 
         guidance = float(data.get("guidance_scale", 8.0))
         steps = int(data.get("steps", 85))
